@@ -6,3 +6,9 @@
 .sensitivity-row span{color:#a8d8d4;font-weight:700}
 .settings-modal p{margin:15px 0 22px}
 .settings-modal .secondary-button{width:100%}
+.missile-warning{position:absolute;top:211px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:11px;min-width:218px;padding:8px 13px;background:rgba(55,19,15,.89);border:1px solid #ff795a;box-shadow:0 0 20px rgba(255,87,56,.26);color:#ffe5d9;animation:missile-pulse .75s ease-in-out infinite alternate}
+.missile-arrow{display:flex;align-items:center;justify-content:center;width:39px;height:39px;flex:none;border:1px solid #ff9b78;border-radius:50%;color:#ffae89;font:900 25px/1 'Barlow Condensed',Arial,sans-serif;text-shadow:0 0 8px #ff7859}
+.missile-warning strong{display:block;font:800 18px/1.15 'Barlow Condensed',Impact,sans-serif;letter-spacing:.14em;color:#ffad8d}
+.missile-warning small{display:block;margin-top:3px;font:700 11px/1.25 'Barlow Condensed',Arial,sans-serif;letter-spacing:.06em;color:#ffeadb}
+@keyframes missile-pulse{from{border-color:#ff795a;box-shadow:0 0 9px rgba(255,87,56,.16)}to{border-color:#ffd2aa;box-shadow:0 0 25px rgba(255,87,56,.42)}}
+@media(max-width:670px){.missile-warning{top:202px;min-width:188px;padding:5px 8px}.missile-warning strong{font-size:14px}.missile-arrow{width:32px;height:32px;font-size:20px}}

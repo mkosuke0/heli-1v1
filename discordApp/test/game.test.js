@@ -78,11 +78,14 @@ test('flare defeats an existing lock missile and abilities respect cooldown', ()
     const guided = room.projectiles.find(m => m.kind === 'lock');
     assert.ok(guided);
     assert.equal(guided.target, p2.id);
+    for (let i = 0; i < 8; i++) game.combat(p1, room, 101.4 + i * 0.1, 0.1);
+    assert.equal(p1.lockProgress, 0, 'lock acquisition stays off during cooldown');
+    assert.equal(room.projectiles.filter(m => m.kind === 'lock').length, 1);
     p2.input = { flare: true };
-    game.combat(p2, room, 101.4, 0.1);
-    game.projectiles(room, 1 / 30, 101.4);
+    game.combat(p2, room, 102.2, 0.1);
+    game.projectiles(room, 1 / 30, 102.2);
     assert.equal(guided.target, null);
-    assert.ok(p2.flareReady > 101.4);
+    assert.ok(p2.flareReady > 102.2);
   } finally { cleanup(); }
 });
 
@@ -211,4 +214,19 @@ test('mouse look deltas accumulate and rotate the helicopter only once', () => {
     game.move(p, 1 / 30);
     assert.ok(p.q.angleTo(afterInput) < 1e-8);
   } finally { clearInterval(game.timer); }
+});
+
+test('state snapshots expose the guided missile target for incoming warnings', () => {
+  const { game, room, p1, p2, cleanup } = setup();
+  try {
+    let state;
+    p1.ws.send = raw => { const message = JSON.parse(raw); if (message.type === 'state') state = message; };
+    room.projectiles.push({ id: 'guided', owner: p2.id, kind: 'lock', target: p1.id,
+      x: p2.x, y: p2.y, z: p2.z, vx: 0, vy: 0, vz: 0, life: 4 });
+    game.snapshot(room);
+    assert.equal(state.projectiles[0].target, p1.id);
+    room.projectiles[0].target = null;
+    game.snapshot(room);
+    assert.equal(state.projectiles[0].target, null);
+  } finally { cleanup(); }
 });

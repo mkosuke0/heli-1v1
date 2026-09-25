@@ -224,7 +224,9 @@ export class GameServer {
     const clear = range < W.lock.range && dot > W.lock.cone &&
       rayBuildingDistance(origin, { x: toEnemy.x / range, y: toEnemy.y / range, z: toEnemy.z / range }, range) >= range - 4;
     const canLock = clear && now >= enemy.flareUntil;
-    p.lockProgress = canLock ? Math.min(W.lock.acquire, p.lockProgress + dt) : Math.max(0, p.lockProgress - dt * 2);
+    p.lockProgress = now < p.lockReady ? 0 : canLock
+      ? Math.min(W.lock.acquire, p.lockProgress + dt)
+      : Math.max(0, p.lockProgress - dt * 2);
     if (i.lock && p.lockProgress >= W.lock.acquire && now >= p.lockReady) {
       p.lockReady = now + W.lock.cooldown;
       p.lockProgress = 0;
@@ -318,7 +320,8 @@ export class GameServer {
       unguided: Math.max(0, p.unguidedReady - now), lock: Math.max(0, p.lockReady - now),
       lockProgress: p.lockProgress / W.lock.acquire }));
     this.broadcast(room, { type: 'state', phase: room.phase, round: room.round,
-      players, projectiles: room.projectiles.map(m => ({ id: m.id, kind: m.kind, x: m.x, y: m.y, z: m.z })),
+      players, projectiles: room.projectiles.map(m => ({ id: m.id, kind: m.kind, target: m.target,
+        x: m.x, y: m.y, z: m.z })),
       events: room.events.splice(0), seq: room.sequence++ });
   }
 }

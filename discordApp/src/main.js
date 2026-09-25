@@ -4,6 +4,8 @@ import { BUILDINGS } from '../shared/map.js';
 import { forwardVector, spawnQuaternion } from '../shared/flight.js';
 import { GAME, SPAWNS } from '../shared/config.js';
 import { flightAxes, mouseAngles, normalizeSensitivity } from './controls.js';
+import { GameAudio, normalizeVolume } from './audio.js';
+import { incomingMissile } from './threats.js';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -26,11 +28,12 @@ app.innerHTML = `
     <aside class="briefing"><div class="brief-head"><span>MISSION BRIEF</span><span>01 / 03</span></div><div class="brief-rule"></div><div class="brief-art"><div class="target-ring"></div><div class="target-ring ring-two"></div><div class="cross-line horizontal"></div><div class="cross-line vertical"></div><div class="art-label">AH-64<br />INSPIRED</div></div><div class="brief-list"><div><span>01</span><p><b>街を使って姿を隠す</b><small>ビルとビルの隙間が射線を切る。</small></p></div><div><span>02</span><p><b>機銃で削り切る</b><small>約30発の命中で敵機を撃墜。</small></p></div><div><span>03</span><p><b>アビリティで逆転</b><small>フレアと2種類のミサイルを使い分ける。</small></p></div></div><div class="brief-footer">DESIGNED FOR DISCORD ACTIVITIES</div></aside>
   </div>
   <div id="waiting" class="modal-backdrop hidden"><div class="modal"><div class="eyebrow"><span></span> HANGAR / READY</div><h2>僚機の到着待ち</h2><p>友達が同じDiscordアクティビティ、または下のルームコードで参加すると自動的に始まります。</p><div class="waiting-code" id="waiting-code"></div><button id="leave-room" class="secondary-button">メニューに戻る</button></div></div>
-  <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="modal settings-modal"><div class="eyebrow"><span></span> FLIGHT CONTROLS</div><h2 id="settings-title">操作設定</h2><label for="sensitivity-range">マウス操作感度</label><div class="sensitivity-row"><input id="sensitivity-range" type="range" min="0.2" max="3" step="0.1" value="1" /><input id="sensitivity-number" type="number" min="0.2" max="3" step="0.1" value="1.0" aria-label="マウス操作感度の数値" /><span>×</span></div><p>0.2～3.0 倍。ヨーとピッチの最高旋回速度はキー操作と同じです。</p><button id="settings-close" class="secondary-button">閉じる</button></div></div>
+  <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="modal settings-modal"><div class="eyebrow"><span></span> FLIGHT CONTROLS / AUDIO</div><h2 id="settings-title">操作設定</h2><label for="sensitivity-range">マウス操作感度</label><div class="sensitivity-row"><input id="sensitivity-range" type="range" min="0.2" max="3" step="0.1" value="1" /><input id="sensitivity-number" type="number" min="0.2" max="3" step="0.1" value="1.0" aria-label="マウス操作感度の数値" /><span>×</span></div><p>0.2～3.0 倍。ヨーとピッチの最高旋回速度はキー操作と同じです。</p><label for="volume-range">ゲーム音量</label><div class="sensitivity-row"><input id="volume-range" type="range" min="0" max="100" step="1" value="70" /><input id="volume-number" type="number" min="0" max="100" step="1" value="70" aria-label="ゲーム音量の数値" /><span>%</span></div><p>エンジン、機銃、ミサイル、警告音に共通です。</p><button id="settings-close" class="secondary-button">閉じる</button></div></div>
   <div id="hud" class="hud hidden">
     <div class="scoreboard"><div class="score-side friendly"><small>YOU / BLUE</small><div id="self-wins" class="win-pips"></div></div><div class="score-center"><span>ROUND <b id="round-number">01</b></span><strong>VS</strong></div><div class="score-side enemy"><small>OPPONENT / ORANGE</small><div id="enemy-wins" class="win-pips"></div></div></div>
     <div class="flight-info"><span id="flight-speed">000</span><small>KM/H</small><i></i><span id="flight-alt">000</span><small>ALT</small></div>
     <div id="enemy-indicator" class="enemy-indicator">▲ ENEMY <span id="enemy-distance">---</span>M</div>
+    <div id="missile-warning" class="missile-warning hidden"><span id="missile-arrow" class="missile-arrow">▲</span><div><strong>MISSILE INBOUND</strong><small><span id="missile-direction">前方</span> · <span id="missile-distance">---</span>M　F フレア</small></div></div>
     <div id="crosshair" class="crosshair"><div class="ch top"></div><div class="ch bottom"></div><div class="ch left"></div><div class="ch right"></div><div class="ch-dot"></div><div id="hitmarker" class="hitmarker">×</div></div>
     <div id="cockpit" class="cockpit hidden"><div class="cockpit-arch"></div><div class="cockpit-l">FLIGHT SYSTEM<br />ONLINE</div><div class="cockpit-r">TADS / LIVE<br />30 MM ARMED</div></div>
     <div id="center-message" class="center-message hidden"><small id="message-kicker">ROUND COMPLETE</small><strong id="message-title">VICTORY</strong><span id="message-subtitle">次のラウンドへ</span><button id="rematch" class="primary-button hidden">もう一度対戦 →</button></div>
@@ -79,15 +82,19 @@ let last = performance.now();
 let nextInput = 0;
 let hitUntil = 0;
 let messageUntil = 0;
-let muted = false;
 let settingsOpen = false;
 let sensitivityMultiplier = 1;
+const audio = new GameAudio();
 try {
   const saved = localStorage.getItem('heli1v1.mouseSensitivity');
   if (saved !== null) sensitivityMultiplier = normalizeSensitivity(saved);
+  const savedVolume = localStorage.getItem('heli1v1.volume');
+  if (savedVolume !== null) audio.setVolume(savedVolume);
 } catch { /* Storage may be unavailable in an embedded activity. */ }
 $('#sensitivity-range').value = String(sensitivityMultiplier);
 $('#sensitivity-number').value = sensitivityMultiplier.toFixed(1);
+$('#volume-range').value = String(audio.volume);
+$('#volume-number').value = String(audio.volume);
 const keys = new Set();
 const pending = new Set();
 const preview = SPAWNS.map((p, i) => ({ ...p, id: `preview-${i}`, slot: i, q: spawnQuaternion(p.yaw).toArray() }));
@@ -113,6 +120,7 @@ function setPhase(value) {
 }
 
 function connect(practice = false) {
+  audio.resume();
   if (discord && !discordRoom) return toast('Discord接続の準備中です');
   const code = practice ? `practice-${Math.random().toString(36).slice(2)}` : (discordRoom || $('#room-code').value.trim().toUpperCase());
   if (!code) return toast('ルームコードを入力してください');
@@ -149,10 +157,14 @@ function handleMessage(msg) {
     else if (phase === 'waiting') { setPhase('playing'); showMessage('ENGAGE', '敵機を撃墜せよ', 'ROUND START', 1.6); }
     for (const event of msg.events) {
       scene.event(event);
-      if (event.type === 'damage' && event.target === meId) playTone(115, 0.13, 'sawtooth', 0.07);
-      if (event.type === 'shot' && event.owner === meId) playTone(90, 0.035, 'sawtooth', 0.022);
+      if (event.type === 'damage' && event.target === meId) audio.damage();
+      if (event.type === 'damage' && event.attacker === meId && event.target !== meId) audio.hitConfirm();
+      if (event.type === 'shot' && event.owner === meId) audio.shot();
       if (event.type === 'shot' && event.hit && event.owner === meId) hitUntil = performance.now() + 130;
-      if (event.type === 'explosion' || event.type === 'destroyed') playTone(55, 0.28, 'sawtooth', 0.09);
+      if (event.type === 'explosion' || event.type === 'destroyed') audio.explosion();
+      if (event.type === 'launch') audio.launch(event.kind);
+      if (event.type === 'flare') audio.flare();
+      if (event.type === 'reload' && event.owner === meId) audio.reload();
     }
     scene.setProjectiles(projectiles);
     updateHud();
@@ -253,11 +265,12 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
   last = now;
+  let me = null;
   if (phase === 'menu' || phase === 'waiting') {
     scene.setPlayers(preview, null, dt, false);
     scene.render(dt, true);
   } else {
-    const me = players.find(p => p.id === meId);
+    me = players.find(p => p.id === meId);
     scene.setPlayers(players, me, dt, ads);
     if (me) {
       const enemy = players.find(p => p.id !== meId);
@@ -267,6 +280,18 @@ function animate(now) {
     }
     scene.render(dt);
   }
+  const threat = phase === 'playing' ? incomingMissile(projectiles, me) : null;
+  const warning = $('#missile-warning');
+  warning.classList.toggle('hidden', !threat);
+  if (threat) {
+    $('#missile-arrow').style.transform = `rotate(${threat.angle}rad)`;
+    $('#missile-direction').textContent = threat.label;
+    $('#missile-distance').textContent = String(Math.round(threat.distance));
+  }
+  audio.updateThreat(threat, now);
+  audio.updateLock(phase === 'playing' && me && me.lock <= 0 ? me.lockProgress : 0, now);
+  audio.updateEngine(phase === 'playing', keys.has('KeyW') ? 1 : keys.has('KeyS') ? -1 : 0,
+    me ? Math.hypot(me.vx, me.vy, me.vz) : 0);
   $('#cockpit').classList.toggle('hidden', !ads || phase !== 'playing');
   $('#crosshair').classList.toggle('ads', ads);
   $('#hitmarker').classList.toggle('visible', now < hitUntil);
@@ -287,10 +312,16 @@ $('#copy-room').addEventListener('click', async () => {
   catch { toast(`ルームコード: ${code}`); }
 });
 $('#sound-toggle').addEventListener('click', () => {
-  muted = !muted;
-  $('#sound-toggle').classList.toggle('muted', muted);
-  toast(muted ? 'サウンド OFF' : 'サウンド ON');
+  audio.resume();
+  if (audio.volume === 0) { setVolume(70); audio.setMuted(false); }
+  else audio.setMuted(!audio.muted);
+  updateSoundButton();
+  toast(audio.muted ? 'サウンド OFF' : 'サウンド ON');
 });
+function updateSoundButton() {
+  $('#sound-toggle').classList.toggle('muted', audio.muted || audio.volume === 0);
+  $('#sound-toggle').setAttribute('aria-pressed', String(!audio.muted && audio.volume > 0));
+}
 function setSettingsOpen(open) {
   settingsOpen = open;
   $('#settings-modal').classList.toggle('hidden', !open);
@@ -308,6 +339,14 @@ function setSensitivity(value, updateNumber = true) {
   if (updateNumber) $('#sensitivity-number').value = sensitivityMultiplier.toFixed(1);
   try { localStorage.setItem('heli1v1.mouseSensitivity', String(sensitivityMultiplier)); } catch { /* Keep the setting for this session. */ }
 }
+function setVolume(value, updateNumber = true) {
+  audio.setVolume(normalizeVolume(value));
+  $('#volume-range').value = String(audio.volume);
+  if (updateNumber) $('#volume-number').value = String(audio.volume);
+  updateSoundButton();
+  try { localStorage.setItem('heli1v1.volume', String(audio.volume)); } catch { /* Keep the setting for this session. */ }
+}
+updateSoundButton();
 $('#settings-toggle').addEventListener('click', () => setSettingsOpen(!settingsOpen));
 $('#settings-close').addEventListener('click', () => setSettingsOpen(false));
 $('#settings-modal').addEventListener('mousedown', event => { if (event.target === $('#settings-modal')) setSettingsOpen(false); });
@@ -316,11 +355,17 @@ $('#sensitivity-number').addEventListener('input', event => {
   if (event.target.value !== '') setSensitivity(event.target.value, false);
 });
 $('#sensitivity-number').addEventListener('change', event => setSensitivity(event.target.value));
+$('#volume-range').addEventListener('input', event => setVolume(event.target.value));
+$('#volume-number').addEventListener('input', event => {
+  if (event.target.value !== '') setVolume(event.target.value, false);
+});
+$('#volume-number').addEventListener('change', event => setVolume(event.target.value));
 $('#room-code').addEventListener('keydown', event => { if (event.key === 'Enter') connect(false); });
 
 const canvas = scene.renderer.domElement;
 canvas.addEventListener('mousedown', event => {
   if (phase !== 'playing' || settingsOpen) return;
+  audio.resume();
   mouseSteeringActive = true;
   if (!pointerLocked) {
     try {
@@ -357,19 +402,3 @@ window.addEventListener('keydown', event => {
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
 window.addEventListener('blur', () => { keys.clear(); pendingMouseYaw = 0; pendingMousePitch = 0; ads = false; mouseSteeringActive = false; });
-
-let audioContext;
-function playTone(frequency, duration, waveform, volume) {
-  if (muted) return;
-  try {
-    audioContext ||= new AudioContext();
-    const osc = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    osc.type = waveform; osc.frequency.setValueAtTime(frequency, audioContext.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(35, frequency * 0.45), audioContext.currentTime + duration);
-    gain.gain.setValueAtTime(volume, audioContext.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
-    osc.connect(gain).connect(audioContext.destination);
-    osc.start(); osc.stop(audioContext.currentTime + duration);
-  } catch { /* Audio is optional in restricted webviews. */ }
-}
