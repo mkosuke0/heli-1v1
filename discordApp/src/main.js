@@ -3,7 +3,7 @@ import { GameScene } from './scene.js';
 import { BUILDINGS } from '../shared/map.js';
 import { forwardVector, spawnQuaternion } from '../shared/flight.js';
 import { GAME, SPAWNS } from '../shared/config.js';
-import { flightAxes, mouseAngles, normalizeSensitivity } from './controls.js';
+import { cursorSteering, flightAxes, mouseAngles, normalizeSensitivity } from './controls.js';
 import { GameAudio, normalizeVolume } from './audio.js';
 import { incomingMissile } from './threats.js';
 import './style.css';
@@ -75,7 +75,13 @@ let phase = 'menu';
 let round = 1;
 let ads = false;
 let pointerLocked = false;
+let pointerLockUnavailable = false;
 let mouseSteeringActive = false;
+let cursorInside = false;
+let cursorX = 0;
+let cursorY = 0;
+let mouseAnchorX = 0;
+let mouseAnchorY = 0;
 let pendingMouseYaw = 0;
 let pendingMousePitch = 0;
 let last = performance.now();
@@ -111,6 +117,7 @@ function setPhase(value) {
   phase = value;
   if (['menu', 'waiting', 'matchEnd'].includes(value)) {
     mouseSteeringActive = false;
+    cursorInside = false;
     if (document.pointerLockElement) document.exitPointerLock?.();
   }
   $('#menu').classList.toggle('hidden', value !== 'menu');
@@ -248,10 +255,15 @@ function sendInput(now) {
   if (now < nextInput || ws?.readyState !== WebSocket.OPEN || !meId) return;
   nextInput = now + 33;
   const active = phase === 'playing' && !settingsOpen;
+  const bounds = scene.renderer.domElement.getBoundingClientRect();
+  const cursor = active && mouseSteeringActive && !pointerLocked && cursorInside
+    ? cursorSteering(cursorX, cursorY, mouseAnchorX, mouseAnchorY,
+      bounds.width, bounds.height, sensitivityMultiplier)
+    : { yaw: 0, pitch: 0 };
   const input = active ? {
     ...flightAxes(keys),
-    mouseYaw: pendingMouseYaw,
-    mousePitch: pendingMousePitch,
+    mouseYaw: pendingMouseYaw + cursor.yaw * GAME.yawRate / GAME.tickRate,
+    mousePitch: pendingMousePitch + cursor.pitch * GAME.pitchRate / GAME.tickRate,
     fire: keys.has('Mouse0'),
     flare: pending.has('KeyF'), unguided: pending.has('Digit1'), lock: pending.has('Digit2'), reload: pending.has('KeyR')
   } : {};
@@ -295,7 +307,12 @@ function animate(now) {
   $('#cockpit').classList.toggle('hidden', !ads || phase !== 'playing');
   $('#crosshair').classList.toggle('ads', ads);
   $('#hitmarker').classList.toggle('visible', now < hitUntil);
-  $('#lock-notice').classList.toggle('hidden', pointerLocked || mouseSteeringActive || phase !== 'playing' || settingsOpen);
+  const mouseNotice = $('#lock-notice');
+  mouseNotice.textContent = pointerLockUnavailable && mouseSteeringActive && !pointerLocked
+    ? 'マウス位置で操縦中 · 画面端で旋回を維持 / ESCで解除'
+    : 'クリックでマウス操縦 / ESCで解除';
+  mouseNotice.classList.toggle('hidden', pointerLocked || phase !== 'playing' || settingsOpen ||
+    (mouseSteeringActive && !pointerLockUnavailable));
   if (now > messageUntil && messageUntil !== Infinity) $('#center-message').classList.add('hidden');
   sendInput(now);
 }
@@ -328,7 +345,7 @@ function setSettingsOpen(open) {
   $('#settings-toggle').setAttribute('aria-expanded', String(open));
   if (open) {
     keys.clear(); pending.clear(); pendingMouseYaw = 0; pendingMousePitch = 0;
-    ads = false; mouseSteeringActive = false;
+    ads = false; mouseSteeringActive = false; cursorInside = false;
     if (document.pointerLockElement) document.exitPointerLock?.();
     $('#sensitivity-range').focus();
   } else $('#settings-toggle').focus();
@@ -363,15 +380,29 @@ $('#volume-number').addEventListener('change', event => setVolume(event.target.v
 $('#room-code').addEventListener('keydown', event => { if (event.key === 'Enter') connect(false); });
 
 const canvas = scene.renderer.domElement;
+canvas.tabIndex = 0;
+function useCursorSteering() {
+  if (!pointerLockUnavailable) toast('カーソル固定が使えないため、マウス位置で操縦します');
+  pointerLockUnavailable = true;
+}
 canvas.addEventListener('mousedown', event => {
   if (phase !== 'playing' || settingsOpen) return;
   audio.resume();
+  canvas.focus({ preventScroll: true });
+  if (!mouseSteeringActive) {
+    mouseAnchorX = event.clientX;
+    mouseAnchorY = event.clientY;
+  }
   mouseSteeringActive = true;
-  if (!pointerLocked) {
+  cursorInside = true;
+  cursorX = event.clientX;
+  cursorY = event.clientY;
+  if (!pointerLocked && !pointerLockUnavailable) {
     try {
       const lock = canvas.requestPointerLock?.();
-      lock?.catch?.(() => {});
-    } catch { /* Keyboard controls remain available. */ }
+      if (!lock && !canvas.requestPointerLock) useCursorSteering();
+      lock?.catch?.(useCursorSteering);
+    } catch { useCursorSteering(); }
   }
   if (event.button === 0) keys.add('Mouse0');
   if (event.button === 2) ads = true;
@@ -383,22 +414,29 @@ window.addEventListener('mouseup', event => {
 window.addEventListener('contextmenu', event => event.preventDefault());
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
-  if (!pointerLocked) { keys.clear(); pendingMouseYaw = 0; pendingMousePitch = 0; ads = false; mouseSteeringActive = false; }
+  if (!pointerLocked) { keys.clear(); pendingMouseYaw = 0; pendingMousePitch = 0; ads = false; mouseSteeringActive = false; cursorInside = false; }
 });
+document.addEventListener('pointerlockerror', useCursorSteering);
 document.addEventListener('mousemove', event => {
-  if (phase !== 'playing' || settingsOpen || (!pointerLocked && (!mouseSteeringActive || event.target !== canvas))) return;
-  const { yaw, pitch } = mouseAngles(event.movementX, event.movementY, GAME.mouseSensitivity * sensitivityMultiplier);
-  pendingMouseYaw += yaw;
-  pendingMousePitch += pitch;
+  if (phase !== 'playing' || settingsOpen || !mouseSteeringActive) return;
+  if (pointerLocked) {
+    const { yaw, pitch } = mouseAngles(event.movementX, event.movementY, GAME.mouseSensitivity * sensitivityMultiplier);
+    pendingMouseYaw += yaw;
+    pendingMousePitch += pitch;
+  } else {
+    cursorInside = event.target === canvas;
+    if (cursorInside) { cursorX = event.clientX; cursorY = event.clientY; }
+  }
 });
+document.addEventListener('mouseleave', () => { cursorInside = false; });
 window.addEventListener('keydown', event => {
   if (event.code === 'Escape' && settingsOpen) { setSettingsOpen(false); return; }
   if (settingsOpen) return;
   if (event.target instanceof HTMLInputElement) return;
-  if (event.code === 'Escape' && !pointerLocked) mouseSteeringActive = false;
+  if (event.code === 'Escape' && !pointerLocked) { mouseSteeringActive = false; cursorInside = false; }
   if (phase === 'playing' && ['KeyW', 'KeyS', 'KeyQ', 'KeyE', 'KeyA', 'KeyD', 'ShiftLeft', 'ControlLeft', 'KeyF', 'Digit1', 'Digit2', 'KeyR'].includes(event.code)) event.preventDefault();
   keys.add(event.code);
   if (!event.repeat && ['KeyF', 'Digit1', 'Digit2', 'KeyR'].includes(event.code)) pending.add(event.code);
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
-window.addEventListener('blur', () => { keys.clear(); pendingMouseYaw = 0; pendingMousePitch = 0; ads = false; mouseSteeringActive = false; });
+window.addEventListener('blur', () => { keys.clear(); pendingMouseYaw = 0; pendingMousePitch = 0; ads = false; cursorInside = false; });
