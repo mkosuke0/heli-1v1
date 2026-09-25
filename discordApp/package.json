@@ -1,0 +1,19 @@
+{
+  "name": "heli-1v1",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "build": "vite build",
+    "start": "node server/index.js --production",
+    "test": "node --test --test-isolation=none",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.4.0",
+    "three": "^0.180.0",
+    "vite": "^7.1.0",
+    "ws": "^8.18.0"
+  }
+}
